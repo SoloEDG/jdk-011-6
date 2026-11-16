@@ -25,6 +25,13 @@ import {
   exportWorld,
   importWorld,
 } from "../features/archive";
+import {
+  StructurePanel,
+  attachStructure,
+  notifyStructure,
+} from "../features/structure";
+import { escapeDanger } from "../features/structure/lib/escape";
+import { editCells } from "../features/world";
 import { createWorkspace, commandRouter } from "./workspace";
 const state = createWorkspace();
 const cmd = commandRouter(state);
@@ -32,14 +39,49 @@ const stats = computed(() => summarize(state.doc));
 const viewport = ref<InstanceType<typeof WorldViewport>>();
 const help = ref(false);
 let detach: () => void;
+let detachStructure: () => void;
 onMounted(() => {
+  detachStructure = attachStructure(state);
   detach = attachPlayer(state);
   window.addEventListener("keydown", cmd.key);
+  window.addEventListener("keydown", escapeKey);
+  if (import.meta.env.DEV) {
+    // Dev-only inspection hook for automated end-to-end checks. It shares the
+    // live reactive workspace, so tests exercise the same code paths as users.
+    (window as unknown as Record<string, unknown>).__blockhaven = {
+      state,
+      cmd,
+      edit: (...args: Parameters<typeof editCells>) => editCells(...args),
+      escape: escapeDanger,
+    };
+  }
 });
 onBeforeUnmount(() => {
   detach();
+  detachStructure();
   window.removeEventListener("keydown", cmd.key);
+  window.removeEventListener("keydown", escapeKey);
 });
+function escapeKey(e: KeyboardEvent) {
+  if (e.code !== "KeyX" || state.structure.phase !== "warning") return;
+  if ((e.target as HTMLElement).matches("input,textarea")) return;
+  escapeDanger(state);
+}
+function evacuate() {
+  if (!escapeDanger(state)) state.message = "周围没有安全落点，请手动远离红色区域";
+}
+/** Save/load must not leave a stale structural warning on screen. */
+function doSave() {
+  save(state);
+}
+function doLoad() {
+  load(state);
+  notifyStructure(state, "世界已载入，重新检查结构支撑");
+}
+async function doImport(file: File) {
+  await importWorld(state, file);
+  notifyStructure(state, "世界已导入，重新检查结构支撑");
+}
 function fullscreen() {
   if (document.fullscreenElement) document.exitFullscreen();
   else
@@ -88,7 +130,7 @@ function fullscreen() {
             <span class="meta-divider">/</span> 32 × 32 × 20
           </div>
         </div>
-        <div class="viewport-wrap">
+        <div class="viewport-wrap" :class="{ 'viewport-danger': state.structure.danger }">
           <WorldViewport ref="viewport" :state="state" @hit="cmd.hit" />
           <div class="view-top">
             <span class="view-badge"
@@ -137,12 +179,36 @@ function fullscreen() {
             </div>
             <Hotbar :state="state" @choose="cmd.material" />
           </div>
+          <div
+            v-if="state.structure.phase === 'warning'"
+            class="collapse-banner"
+            :class="{ danger: state.structure.danger }"
+          >
+            <span class="collapse-icon">⚠</span>
+            <div>
+              <b>{{
+                state.structure.danger ? "危险：你正处在坠落区下方" : "结构失稳预警"
+              }}</b>
+              <p>
+                {{ state.structure.unstable }} 个方块失去支撑，
+                {{ state.structure.warningLeft.toFixed(1) }} 秒后坠落。
+              </p>
+            </div>
+            <button class="soft" @click="evacuate">撤离 <kbd>X</kbd></button>
+          </div>
+          <div v-if="state.structure.phase === 'collapsing'" class="collapse-banner falling">
+            <span class="collapse-icon">↓</span>
+            <div>
+              <b>结构正在坍塌</b>
+              <p>{{ state.structure.falling }} 个方块坠落中，落地后将重新检查承重。</p>
+            </div>
+          </div>
           <div v-if="help" class="help-card">
             <b>随心探索，自由建造</b>
             <p>
               单击放置或拆除 · 拖动旋转视角<br />右键拖动平移 · 滚轮缩放<br />R
               选择两个角点 · Esc 取消选择<br />Tab 切换行走 · WASD 移动 ·
-              空格跳跃
+              空格跳跃<br />拆掉支柱会引发坍塌预警 · 按 X 一键撤离
             </p>
             <button class="soft" @click="help = false">开始建造</button>
           </div>
@@ -165,6 +231,7 @@ function fullscreen() {
         </div>
       </section>
       <aside class="right-sidebar">
+        <StructurePanel :state="state" />
         <InventoryPanel :state="state" @choose="cmd.material" /><SelectionPanel
           :state="state"
           @fill="cmd.region(false)"
@@ -173,10 +240,10 @@ function fullscreen() {
           @start="cmd.tool('select')"
         /><PlayerPanel :state="state" @toggle="cmd.toggle()" /><ArchivePanel
           :state="state"
-          @save="save(state)"
-          @load="load(state)"
+          @save="doSave()"
+          @load="doLoad()"
           @export="exportWorld(state)"
-          @import="importWorld(state, $event)"
+          @import="doImport($event)"
         />
       </aside>
     </main>

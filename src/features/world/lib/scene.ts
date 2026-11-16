@@ -1,6 +1,12 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-import { blockMeshes, disposeGroup } from "./meshes";
+import {
+  blockMeshes,
+  fallingMeshes,
+  unstableMarker,
+  dangerColumns,
+  disposeGroup,
+} from "./meshes";
 import type { Workspace, Vec3 } from "../../../shared/document";
 import type { SceneHit } from "../../../shared/commands";
 export function mountScene(
@@ -59,6 +65,12 @@ export function mountScene(
   scene.add(grid);
   let blocks = blockMeshes(state.doc);
   scene.add(blocks);
+  let fallingGroup = fallingMeshes(state.doc.falling);
+  scene.add(fallingGroup);
+  let unstableGroup = new THREE.Group();
+  scene.add(unstableGroup);
+  let hazardGroup = new THREE.Group();
+  scene.add(hazardGroup);
   const cursor = new THREE.Mesh(
     new THREE.BoxGeometry(1.02, 1.02, 1.02),
     new THREE.MeshBasicMaterial({ color: "#e9b261", wireframe: true }),
@@ -139,6 +151,43 @@ export function mountScene(
   resize.observe(host);
   let frame = 0,
     revision = -1;
+  let fallingCount = -1,
+    fallingSignature = "";
+  function refreshFalling() {
+    const list = state.doc.falling;
+    const signature = list
+      .map((f) => `${f.id}:${f.y.toFixed(2)}`)
+      .join("|");
+    if (signature === fallingSignature && list.length === fallingCount) return;
+    fallingSignature = signature;
+    fallingCount = list.length;
+    scene.remove(fallingGroup);
+    disposeGroup(fallingGroup);
+    fallingGroup = fallingMeshes(list);
+    scene.add(fallingGroup);
+  }
+  let overlayPhase = "";
+  function refreshStructureOverlay() {
+    const st = state.structure;
+    // `resultId` changes on every installed analysis, so the warn/danger
+    // geometry follows edits without being rebuilt each frame.
+    const key = `${st.resultId}:${st.phase}`;
+    if (key === overlayPhase) return;
+    overlayPhase = key;
+    scene.remove(unstableGroup);
+    disposeGroup(unstableGroup);
+    unstableGroup = unstableMarker(
+      st.unstableKeys.map((k) => {
+        const [x, y, z] = k.split(",").map(Number);
+        return { x, y, z };
+      }),
+    );
+    scene.add(unstableGroup);
+    scene.remove(hazardGroup);
+    disposeGroup(hazardGroup);
+    hazardGroup = dangerColumns(st.dangerColumns);
+    scene.add(hazardGroup);
+  }
   function animate() {
     frame = requestAnimationFrame(animate);
     if (revision !== state.doc.revision) {
@@ -148,11 +197,31 @@ export function mountScene(
       scene.add(blocks);
       revision = state.doc.revision;
     }
+    // Falling blocks move every frame, so they are rebuilt rather than keyed
+    // to a revision. Their count is small (one collapse at a time).
+    refreshFalling();
+    refreshStructureOverlay();
     avatar.position.set(
       state.doc.player.x,
       state.doc.player.y,
       state.doc.player.z,
     );
+    const danger = state.structure.danger;
+    const warning = state.structure.phase === "warning";
+    const cursorMat = cursor.material as THREE.MeshBasicMaterial;
+    cursorMat.color.set(
+      danger ? "#e04a3a" : warning ? "#e07a3a" : "#e9b261",
+    );
+    const pulse = 1 + Math.sin(performance.now() / 220) * 0.04;
+    cursor.scale.setScalar(danger ? pulse * 1.08 : 1);
+    hazardGroup.children.forEach((c, i) => {
+      const m = (c as THREE.Mesh).material as THREE.MeshBasicMaterial;
+      m.opacity = 0.1 + 0.1 * (0.5 + 0.5 * Math.sin(performance.now() / 260 + i));
+    });
+    unstableGroup.children.forEach((c, i) => {
+      const m = (c as THREE.LineSegments).material as THREE.LineBasicMaterial;
+      m.opacity = 0.45 + 0.5 * (0.5 + 0.5 * Math.sin(performance.now() / 200 + i * 0.3));
+    });
     if (state.region) {
       const { a, b } = state.region;
       region.visible = true;
@@ -181,6 +250,9 @@ export function mountScene(
       resize.disconnect();
       controls.dispose();
       disposeGroup(blocks);
+      disposeGroup(fallingGroup);
+      disposeGroup(unstableGroup);
+      disposeGroup(hazardGroup);
       renderer.dispose();
       renderer.domElement.remove();
     },

@@ -51,5 +51,6 @@ export function createWorld(): WorldDocument {
     inventory: initialStock(),
     player: { x: 0, y: 3, z: 9 },
     revision: 0,
+    falling: [],
   };
 }

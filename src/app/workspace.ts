@@ -1,9 +1,13 @@
 import { reactive } from "vue";
 import type { Workspace, Tool, MaterialId } from "../shared/document";
 import type { SceneHit } from "../shared/commands";
+import { emptyStructure } from "../shared/structure";
 import { createWorld, editCells } from "../features/world";
 import { pickCorner, regionCells, clearRegion } from "../features/selection";
 import { chooseMaterial, selectSlot } from "../features/inventory";
+
+export { emptyStructure };
+
 export function createWorkspace() {
   return reactive<Workspace>({
     doc: createWorld(),
@@ -15,6 +19,7 @@ export function createWorkspace() {
     dirty: false,
     mode: "build",
     savedAt: null,
+    structure: emptyStructure(),
   });
 }
 export function commandRouter(s: Workspace) {

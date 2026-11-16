@@ -13,3 +13,16 @@ export interface WorldSummary {
   highest: number;
   materials: number;
 }
+/** Static facts about a single block, used by the structural analyser. */
+export interface CellRule {
+  span: number;
+  weight: number;
+  capacity: number;
+}
+export interface StructureStats {
+  total: number;
+  stable: number;
+  unstable: number;
+  maxLoadRatio: number;
+  unstableKeys: string[];
+}

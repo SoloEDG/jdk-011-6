@@ -48,5 +48,8 @@ export function stepPlayer(
     Object.assign(p, { x: 0, y: 12, z: 9 });
     motion.vertical = 0;
   }
+  // Moving the player is not a grid edit, so it must not bump the block
+  // revision (which would rebuild every instanced mesh). It still marks the
+  // world dirty so saves are not missed.
   s.dirty = true;
 }
